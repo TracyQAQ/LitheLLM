@@ -1,0 +1,12 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+
+.vscode/
+.idea/
+
+*.pth
+*.pt
+*.bin
+*.safetensors
