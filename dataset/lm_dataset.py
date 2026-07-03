@@ -44,6 +44,18 @@ class PretrainDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
+
+        # 安全获取特殊 token id（防止 None）
+        pad_id = tokenizer.pad_token_id
+        if pad_id is None:
+            pad_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+        bos_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else pad_id
+        eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else pad_id
+
+        self.pad_id = pad_id
+        self.bos_id = bos_id
+        self.eos_id = eos_id
+
         self.samples = load_dataset('json', data_files=data_path, split='train')
 
     def __len__(self):
@@ -55,12 +67,12 @@ class PretrainDataset(Dataset):
             str(sample['text']), add_special_tokens=False,
             max_length=self.max_length - 2, truncation=True,
         ).input_ids
-        tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
-        input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
-        input_ids = torch.tensor(input_ids, dtype=torch.long)
-        labels = input_ids.clone()
-        labels[input_ids == self.tokenizer.pad_token_id] = -100
-        return input_ids, labels
+        if tokens is None:
+            tokens = []
+        # 添加 bos 和 eos，返回原始长度（不填充）
+        token_ids = [self.bos_id] + tokens + [self.eos_id]
+        # 转为 torch tensor（此处不 padding）
+        return torch.tensor(token_ids, dtype=torch.long)
 
 
 class SFTDataset(Dataset):
