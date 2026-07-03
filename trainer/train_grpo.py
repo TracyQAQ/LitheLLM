@@ -341,13 +341,39 @@ if __name__ == "__main__":
     model_device = args.device if not use_fsdp else "cpu"
 
     # 参考 train_full_sft.py 的权重恢复逻辑
-    weight_path = args.from_weight
-    if ckp_data and (weight_path is None or not os.path.exists(weight_path)):
+    # weight_path = args.from_weight
+    # if ckp_data and (weight_path is None or not os.path.exists(weight_path)):
+    #     resume_weight_path = f'{args.save_dir}/{args.save_weight}.pth'
+    #     if os.path.exists(resume_weight_path):
+    #         weight_path = resume_weight_path
+    #         if is_main_process():
+    #             Logger(f"断点续训: 将从 {weight_path} 恢复模型权重")
+
+    # ------------------ 新权重加载逻辑 ------------------
+    weight_path = None
+    if ckp_data:
         resume_weight_path = f'{args.save_dir}/{args.save_weight}.pth'
         if os.path.exists(resume_weight_path):
             weight_path = resume_weight_path
             if is_main_process():
-                Logger(f"断点续训: 将从 {weight_path} 恢复模型权重")
+                Logger(f"断点续训: 将从 {resume_weight_path} 恢复模型权重")
+        else:
+            if args.from_weight and os.path.exists(args.from_weight):
+                weight_path = args.from_weight
+                if is_main_process():
+                    Logger(f"警告: 未找到 GRPO 权重 {resume_weight_path}，将使用 --from_weight 指定的 {weight_path}")
+            else:
+                if is_main_process():
+                    Logger("警告: 未找到任何可加载的权重，将使用原始预训练模型")
+    else:
+        if args.from_weight and os.path.exists(args.from_weight):
+            weight_path = args.from_weight
+            if is_main_process():
+                Logger(f"加载外部权重: {weight_path}")
+        else:
+            if is_main_process():
+                Logger("从头开始训练（使用原始预训练权重）")
+    # -------------------------------------------------
 
     model, tokenizer = init_model(args.model_name_or_path, weight_path, model_device, args.use_flash_attn)
     ref_model, _ = init_model(args.model_name_or_path, weight_path, model_device, args.use_flash_attn)
