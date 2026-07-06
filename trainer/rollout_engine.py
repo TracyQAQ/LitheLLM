@@ -281,7 +281,7 @@ class SGLangRolloutEngine(RolloutEngine):
                     logprobs.append(item)
 
             if len(logprobs) > len(completion_ids):
-                logprobs = logprobs[:len(completion_ids)]
+                logprobs = logprobs[-len(completion_ids):]
             elif len(logprobs) < len(completion_ids):
                 # 用极小值补齐，防止 exp 运算溢出
                 logprobs.extend([-1e9] * (len(completion_ids) - len(logprobs)))
