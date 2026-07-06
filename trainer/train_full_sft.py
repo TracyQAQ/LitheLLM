@@ -214,7 +214,7 @@ def train_epoch(epoch, loader, iters, args, model, optimizer, scaler, autocast_c
         # 补充 flush 后最后一步的日志打印
         if is_main_process():
             time_since_last_log = time.time() - last_log_time
-            steps_since_last_log = 1
+            steps_since_last_log = global_step - last_log_step
             steps_per_sec = steps_since_last_log / max(time_since_last_log, 1e-5)
             remaining_steps = max(0, total_global_steps - global_step)
             eta_min = (remaining_steps / steps_per_sec) / 60 if steps_per_sec > 0 else 0
