@@ -311,7 +311,7 @@ class SGLangRolloutEngine(RolloutEngine):
         return RolloutResult(
             output_ids=pad_to_tensor(all_output_ids, max_out_len),
             completion_ids=pad_to_tensor(all_completion_ids, max_comp_len),
-            per_token_logps=pad_to_tensor(all_logprobs, max_logp_len, pad_val=0.0),
+            per_token_logps=pad_to_tensor(all_logprobs, max_logp_len, pad_val=-1e9),
             completions=completions,
             attention_mask=output_attention_mask,
         )
@@ -349,6 +349,9 @@ class SGLangRolloutEngine(RolloutEngine):
             if resp.status_code != 200:
                 print(f"[SGLANG WARNING] update_weights 失败: {resp.status_code}, {resp.text}")
             return resp.status_code == 200
+        # 【核心修改】增加分布式屏障，确保所有进程在此同步，等待 SGLang 更新完成
+        if dist.is_initialized():
+            dist.barrier()
         return True
 
     def flush_cache(self) -> bool:
