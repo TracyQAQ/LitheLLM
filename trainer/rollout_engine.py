@@ -280,11 +280,12 @@ class SGLangRolloutEngine(RolloutEngine):
                 elif isinstance(item, (int, float)):
                     logprobs.append(item)
 
-            # 如果 logprobs 的长度和 completion_ids 不一致，按 completion_ids 长度截断或补齐
+            # 从末尾截取，保证拿到的是 completion 部分的 logprobs
             if len(logprobs) > len(completion_ids):
-                logprobs = logprobs[:len(completion_ids)]
+                logprobs = logprobs[-len(completion_ids):]
             elif len(logprobs) < len(completion_ids):
-                logprobs.extend([0.0] * (len(completion_ids) - len(logprobs)))
+                # 用极小值补齐，防止 exp 运算溢出
+                logprobs.extend([-1e9] * (len(completion_ids) - len(logprobs)))
 
             prompt = all_input_ids[i]
             full_output = prompt + completion_ids
