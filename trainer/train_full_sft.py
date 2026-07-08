@@ -348,7 +348,7 @@ if __name__ == "__main__":
                 Logger(f"加载外部权重: {weight_path}")
         else:
             if is_main_process():
-                Logger("从头开始训练（使用原始预训练权重）")
+                Logger("从头开始训练（使用原始权重）")
     # -------------------------------------------------
 
     model, tokenizer = init_model(

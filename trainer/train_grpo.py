@@ -48,17 +48,25 @@ mp.set_start_method('spawn', force=True)
 
 
 def grpo_train_epoch(epoch, loader, iters, args, model, optimizer, scaler, scheduler,
-                     rollout_engine, ref_model, reward_function, start_global_step=0, wandb=None):
+                     rollout_engine, ref_model, reward_function, tokenizer,
+                     save_checkpoint_fn, start_global_step=0, wandb=None):
     global_step = start_global_step
     running_loss = 0.0
     running_reward = 0.0
-    log_micro_steps = 0
     optimizer.zero_grad(set_to_none=True)
+    ppo_epochs = getattr(args, 'ppo_epochs', 1)
 
-    # 【修复1】直接用真实 loader 长度计算总步数，防止外部 iters 传入不一致
+    # 恢复这一行计算：用于日志显示进度
     steps_per_epoch = math.ceil(iters / args.accumulation_steps)
 
+    # 1. 逻辑冲突校验
+    if ppo_epochs > 1 and args.accumulation_steps > 1:
+        if is_main_process():
+            Logger("错误: ppo_epochs > 1 时不支持 accumulation_steps > 1。", level="error")
+        raise ValueError("Configuration Conflict: ppo_epochs > 1 and accumulation_steps > 1")
+
     for micro_step, batch in enumerate(loader):
+        t_step = time.time()
         prompts = batch['prompt']
         prompt_inputs = tokenizer(prompts, return_tensors="pt", padding=True, return_token_type_ids=False,
                                   padding_side="left", add_special_tokens=False).to(args.device)
@@ -66,7 +74,7 @@ def grpo_train_epoch(epoch, loader, iters, args, model, optimizer, scaler, sched
             prompt_inputs["input_ids"] = prompt_inputs["input_ids"][:, -args.max_seq_len:]
             prompt_inputs["attention_mask"] = prompt_inputs["attention_mask"][:, -args.max_seq_len:]
 
-        t_step = time.time()
+        # 2. Rollout 采样
         rollout_result = rollout_engine.rollout(
             prompt_ids=prompt_inputs["input_ids"],
             attention_mask=prompt_inputs["attention_mask"],
@@ -76,84 +84,54 @@ def grpo_train_epoch(epoch, loader, iters, args, model, optimizer, scaler, sched
         )
         outputs = rollout_result.output_ids.clone()
         completion_ids = rollout_result.completion_ids.clone()
-
-        # 增加空 completion 防护
-        if completion_ids.shape[1] == 0:
-            print(f"[WARN] Step {global_step}: SGLang returned empty completion! Skipping this batch.")
-            print(f"Prompts: {prompts}")
-            continue
-
         completions = rollout_result.completions
-        old_per_token_logps = rollout_result.per_token_logps.to(args.device)
         full_attention_mask = rollout_result.attention_mask.to(args.device)
+        old_per_token_logps = rollout_result.per_token_logps.to(args.device).detach()
 
-        _clear_model_cache(model)
         _clear_model_cache(ref_model)
-
-        with autocast_ctx:
-            res = model(outputs, attention_mask=full_attention_mask, use_cache=False)
-            logits = res.logits[:, :-1, :]
-            per_token_logps = F.log_softmax(logits, dim=-1).gather(
-                2, outputs[:, 1:].unsqueeze(-1)
-            ).squeeze(-1)[:, -completion_ids.size(1):]
-
         with torch.no_grad():
             ref_per_token_logps = compute_per_token_logps(
                 ref_model, outputs, completion_ids.size(1), attention_mask=full_attention_mask
-            )
+            ).detach()
 
-        if torch.isnan(per_token_logps).any():
-            Logger(f"[Step {global_step}] WARNING: per_token_logps NaN!", level="warn")
-
+        # 3. 计算奖励与优势 (Advantage)
         rewards = reward_function.calculate(prompts, completions, args.device)
-
-        if args.debug_mode and is_main_process() and global_step % args.debug_interval == 0:
-            for i in range(len(prompts)):
-                for j in range(args.num_generations):
-                    idx = i * args.num_generations + j
-                    Logger(f"[DEBUG] gen[{j}] reward={rewards[idx].item():.4f}")
-
         grouped_rewards = rewards.view(-1, args.num_generations)
         mean_r = grouped_rewards.mean(dim=1).repeat_interleave(args.num_generations)
         std_r = grouped_rewards.std(dim=1).repeat_interleave(args.num_generations)
-        advantages = (rewards - mean_r) / (std_r + 1e-4)
+        advantages = ((rewards - mean_r) / (std_r + 1e-4)).detach()
 
         is_eos = completion_ids == tokenizer.eos_token_id
         eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=args.device)
         eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
         completion_mask = (
                 torch.arange(is_eos.size(1), device=args.device).expand(is_eos.size(0), -1) <= eos_idx.unsqueeze(
-            1)).int()
+            1)).int().detach()
 
-        kl_div = ref_per_token_logps - per_token_logps
-        per_token_kl = torch.exp(kl_div) - kl_div - 1
-        ratio = torch.exp(per_token_logps - old_per_token_logps)
+        # 4. PPO 内层循环
+        for ppo_epoch in range(ppo_epochs):
+            _clear_model_cache(model)
+            with autocast_ctx:
+                res = model(outputs, attention_mask=full_attention_mask, use_cache=False)
+                logits = res.logits[:, :-1, :]
+                per_token_logps = F.log_softmax(logits, dim=-1).gather(2, outputs[:, 1:].unsqueeze(-1)).squeeze(-1)[:,
+                                  -completion_ids.size(1):]
 
-        if args.loss_type == "cispo":
-            clamped_ratio = torch.clamp(ratio, max=args.epsilon_high).detach()
-            per_token_loss = -(clamped_ratio * advantages.unsqueeze(1) * per_token_logps - args.beta * per_token_kl)
-        else:
-            clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
-            per_token_loss1 = ratio * advantages.unsqueeze(1)
-            per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
-            per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
+                kl_div = ref_per_token_logps - per_token_logps
+                per_token_kl = torch.exp(kl_div) - kl_div - 1
+                ratio = torch.exp(per_token_logps - old_per_token_logps)
 
-        policy_loss = ((per_token_loss * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
+                clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
+                per_token_loss1 = ratio * advantages.unsqueeze(1)
+                per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
+                per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
+                policy_loss = ((per_token_loss * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
 
-        loss = policy_loss / args.accumulation_steps
-        if scaler is not None:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-        running_loss += policy_loss.item()
-        running_reward += rewards.mean().item()
-        log_micro_steps += 1
-
-        is_accumulation_step = (micro_step + 1) % args.accumulation_steps == 0
-        if is_accumulation_step:
             if scaler is not None:
+                scaler.scale(policy_loss).backward()
                 scaler.unscale_(optimizer)
+            else:
+                policy_loss.backward()
 
             if args.grad_clip > 0:
                 if isinstance(model, FSDP):
@@ -166,82 +144,49 @@ def grpo_train_epoch(epoch, loader, iters, args, model, optimizer, scaler, sched
                 scaler.update()
             else:
                 optimizer.step()
-            scheduler.step()
             optimizer.zero_grad()
-            rollout_engine.update_policy(model)
 
-            global_step += 1
+            running_loss += policy_loss.item()
+            running_reward += rewards.mean().item()
 
-            # 【关键修复】必须先计算 local_step，再用于 if 判断
-            local_step = global_step % steps_per_epoch
-            if local_step == 0:
-                local_step = steps_per_epoch
-
-            # 保证当前 Epoch 最后一步一定会被打印
-            if local_step % args.log_interval == 0 or local_step == steps_per_epoch:
-                current_loss = running_loss / log_micro_steps
-                current_reward = running_reward / log_micro_steps
-                avg_len_val = completion_mask.sum(dim=1).float().mean().item()
-                kl_ref_val = ((ref_per_token_logps - per_token_logps) * completion_mask).sum().item() / max(
-                    completion_mask.sum().item(), 1)
-
-                Logger(
-                    f'Epoch:[{epoch + 1}/{args.epochs}] Step:[{local_step}/{steps_per_epoch}], '
-                    f'Reward: {current_reward:.4f}, KL: {kl_ref_val:.4f}, '
-                    f'AdvStd: {advantages.std().item():.4f}, '
-                    f'Loss: {current_loss:.6f}, Len: {avg_len_val:.0f}, '
-                    f'LR: {optimizer.param_groups[0]["lr"]:.8f}, '
-                    f'Time: {time.time() - t_step:.1f}s')
-
-                if wandb and is_main_process():
-                    wandb.log({"reward": current_reward, "kl_ref": kl_ref_val, "policy_loss": current_loss,
-                               "avg_response_len": avg_len_val, "learning_rate": optimizer.param_groups[0]['lr']},
-                              step=global_step)
-
-                running_loss = 0.0
-                running_reward = 0.0
-                log_micro_steps = 0
-
-            if args.save_interval > 0 and local_step % args.save_interval == 0:
-                model.eval()
-                save_checkpoint_fn(epoch, global_step)
-                model.train()
-
-    # Epoch 结尾处理余数
-    remainder = len(loader) % args.accumulation_steps
-    if remainder != 0 and len(loader) > 0:
-        if is_main_process():
-            Logger(f"Epoch {epoch + 1} end: Flushing {remainder} remaining accumulated gradients.")
-
-        if scaler is not None:
-            scaler.unscale_(optimizer)
-
-        if args.grad_clip > 0:
-            if isinstance(model, FSDP):
-                model.clip_grad_norm_(args.grad_clip)
-            else:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-
-        if scaler is not None:
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
-
+        # 5. 全局步数推进
         scheduler.step()
-        optimizer.zero_grad()
         rollout_engine.update_policy(model)
-
         global_step += 1
 
-        # 补充 flush 后最后一步的日志打印
-        if is_main_process():
-            local_step = global_step % steps_per_epoch
-            if local_step == 0:
-                local_step = steps_per_epoch
+        # 6. 原版格式的日志输出
+        if global_step % args.log_interval == 0:
+            current_loss = running_loss / (args.log_interval * ppo_epochs)
+            current_reward = running_reward / (args.log_interval * ppo_epochs)
+            avg_len_val = completion_mask.sum(dim=1).float().mean().item()
+            kl_ref_val = ((ref_per_token_logps - per_token_logps.detach()) * completion_mask).sum().item() / max(
+                completion_mask.sum().item(), 1)
+
+            # 恢复计算 local_step
+            local_step = (global_step - 1) % steps_per_epoch + 1
+
             Logger(
-                f'Epoch:[{epoch + 1}/{args.epochs}] Step:[{local_step}/{steps_per_epoch}] (Flushing completed), '
-                f'LR: {optimizer.param_groups[0]["lr"]:.8f}')
+                f'Epoch:[{epoch + 1}/{args.epochs}] Step:[{local_step}/{steps_per_epoch}], '
+                f'Reward: {current_reward:.4f}, KL: {kl_ref_val:.4f}, '
+                f'AdvStd: {advantages.std().item():.4f}, '
+                f'Loss: {current_loss:.6f}, Len: {avg_len_val:.0f}, '
+                f'LR: {optimizer.param_groups[0]["lr"]:.8f}, '
+                f'Time: {time.time() - t_step:.1f}s')
+
+            if wandb and is_main_process():
+                wandb.log({"reward": current_reward, "kl_ref": kl_ref_val, "policy_loss": current_loss,
+                           "avg_response_len": avg_len_val, "learning_rate": optimizer.param_groups[0]['lr']},
+                          step=global_step)
+
+            running_loss, running_reward = 0.0, 0.0
+
+        if args.save_interval > 0:
+            # 重新计算当前 epoch 内的局部步数
+            local_step = (global_step - 1) % steps_per_epoch + 1
+
+            # 使用 local_step 作为触发条件
+            if local_step % args.save_interval == 0:
+                save_checkpoint_fn(epoch, global_step)
 
     return global_step
 
@@ -296,6 +241,7 @@ if __name__ == "__main__":
                         help="系统提示词的 Markdown 文件路径")
     parser.add_argument("--reward_func_type", type=str, default="DefaultReward",
                         help="使用的奖励函数类型，例如: DefaultReward, MathTaskReward 等")
+    parser.add_argument("--ppo_epochs", type=int, default=3, help="PPO 内层循环次数，建议 3-4 次")
     args = parser.parse_args()
 
     # ========== 1. 初始化 ==========
@@ -372,7 +318,7 @@ if __name__ == "__main__":
                 Logger(f"加载外部权重: {weight_path}")
         else:
             if is_main_process():
-                Logger("从头开始训练（使用原始预训练权重）")
+                Logger("从头开始训练（使用原始权重）")
     # -------------------------------------------------
 
     model, tokenizer = init_model(args.model_name_or_path, weight_path, model_device, args.use_flash_attn)
@@ -647,11 +593,14 @@ if __name__ == "__main__":
 
         global_step = grpo_train_epoch(
             epoch, loader, iters_per_epoch, args, model, optimizer, scaler, scheduler,
-            rollout_engine, ref_model, reward_function, global_step, wandb
+            rollout_engine, ref_model, reward_function, tokenizer, save_checkpoint_fn, global_step, wandb
         )
 
         # Epoch 结束时保存一次 (如果 save_interval 没触发)
-        if args.save_interval <= 0 or global_step % args.save_interval != 0:
+        final_local_step = global_step % steps_per_epoch
+        if final_local_step == 0: final_local_step = steps_per_epoch  # 处理整除情况
+
+        if args.save_interval <= 0 or final_local_step % args.save_interval != 0:
             save_checkpoint_fn(epoch, global_step)
 
     if dist.is_initialized():
