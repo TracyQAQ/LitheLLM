@@ -286,15 +286,6 @@ if __name__ == "__main__":
     # ========== 5. 模型 ==========
     model_device = args.device if not use_fsdp else "cpu"
 
-    # 参考 train_full_sft.py 的权重恢复逻辑
-    # weight_path = args.from_weight
-    # if ckp_data and (weight_path is None or not os.path.exists(weight_path)):
-    #     resume_weight_path = f'{args.save_dir}/{args.save_weight}.pth'
-    #     if os.path.exists(resume_weight_path):
-    #         weight_path = resume_weight_path
-    #         if is_main_process():
-    #             Logger(f"断点续训: 将从 {weight_path} 恢复模型权重")
-
     # ------------------ 新权重加载逻辑 ------------------
     weight_path = None
     if ckp_data:
@@ -372,17 +363,6 @@ if __name__ == "__main__":
         fsdp_kwargs = dict(sharding_strategy=sharding_strategy, mixed_precision=mixed_precision,
                            cpu_offload=cpu_offload, backward_prefetch=backward_prefetch, device_id=device_id,
                            sync_module_states=True, use_orig_params=True, limit_all_gathers=True)
-        # decoder_layer_cls = get_decoder_layer_class(model)
-        # Logger(f"Detected decoder layer: {decoder_layer_cls.__name__}")
-        # check_fn = lambda m: isinstance(m, decoder_layer_cls)
-        # apply_activation_checkpointing(model, checkpoint_wrapper_fn=functools.partial(
-        #     checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT), check_fn=check_fn)
-        # apply_activation_checkpointing(ref_model, checkpoint_wrapper_fn=functools.partial(
-        #     checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT), check_fn=check_fn)
-        # auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={decoder_layer_cls})
-        # model = FSDP(model, auto_wrap_policy=auto_wrap_policy, **fsdp_kwargs)
-        # ref_model = FSDP(ref_model, auto_wrap_policy=auto_wrap_policy, **fsdp_kwargs)
-        # Logger("FSDP wrapping done")
 
         # 1. 获取 DecoderLayer 和 MoE Block 类
         decoder_layer_cls, moe_block_cls = get_model_block_classes(model)

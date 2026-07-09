@@ -317,14 +317,6 @@ if __name__ == "__main__":
     # ========== 5. 定义模型、数据 ==========
     use_fsdp = args.use_fsdp == 1 and dist.is_initialized()
 
-    # weight_path = args.from_weight
-    # if ckp_data and (weight_path is None or not os.path.exists(weight_path)):
-    #     resume_weight_path = f'{args.save_dir}/{args.save_weight}.pth'
-    #     if os.path.exists(resume_weight_path):
-    #         weight_path = resume_weight_path
-    #         if is_main_process():
-    #             Logger(f"断点续训: 将从 {weight_path} 恢复模型权重")
-
     # ------------------ 新权重加载逻辑 ------------------
     weight_path = None
     if ckp_data:
@@ -432,25 +424,6 @@ if __name__ == "__main__":
             use_orig_params=True,
             limit_all_gathers=True,
         )
-
-        # decoder_layer_cls = get_decoder_layer_class(model)
-        # Logger(f"Detected decoder layer class: {decoder_layer_cls.__name__}")
-        #
-        # check_fn = lambda submodule: isinstance(submodule, decoder_layer_cls)
-        # apply_activation_checkpointing(
-        #     model,
-        #     checkpoint_wrapper_fn=functools.partial(
-        #         checkpoint_wrapper,
-        #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        #     ),
-        #     check_fn=check_fn,
-        # )
-        # Logger("Activation checkpointing applied (BEFORE FSDP wrapping)")
-        #
-        # auto_wrap_policy = functools.partial(
-        #     transformer_auto_wrap_policy,
-        #     transformer_layer_cls={decoder_layer_cls},
-        # )
 
         # 1. 获取 DecoderLayer 和 MoE Block 类
         decoder_layer_cls, moe_block_cls = get_model_block_classes(model)
