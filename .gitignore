@@ -1,7 +1,6 @@
 # Virtual Environments
 venv/
 .venv/
-env/
 
 .vscode/
 .idea/

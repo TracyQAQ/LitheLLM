@@ -83,7 +83,7 @@ def merge_shards(
             shutil.copy2(src, os.path.join(output_dir, extra))
             print(f"已复制 {extra}")
 
-    print("合并完成！")
+    print("权重合并完成！")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
