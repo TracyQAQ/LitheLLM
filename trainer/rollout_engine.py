@@ -284,7 +284,7 @@ class SGLangRolloutEngine(RolloutEngine):
                 logprobs = logprobs[-len(completion_ids):]
             elif len(logprobs) < len(completion_ids):
                 # 用极小值补齐，防止 exp 运算溢出
-                logprobs.extend([-1e9] * (len(completion_ids) - len(logprobs)))
+                logprobs.extend([-20.0] * (len(completion_ids) - len(logprobs)))
 
             prompt = all_input_ids[i]
             full_output = prompt + completion_ids
@@ -311,7 +311,7 @@ class SGLangRolloutEngine(RolloutEngine):
         return RolloutResult(
             output_ids=pad_to_tensor(all_output_ids, max_out_len),
             completion_ids=pad_to_tensor(all_completion_ids, max_comp_len),
-            per_token_logps=pad_to_tensor(all_logprobs, max_logp_len, pad_val=-1e9),
+            per_token_logps=pad_to_tensor(all_logprobs, max_logp_len, pad_val=-20.0),
             completions=completions,
             attention_mask=output_attention_mask,
         )

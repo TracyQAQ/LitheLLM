@@ -52,15 +52,23 @@ class DefaultReward(BaseRewardFunction):
 
                     answer = response
                     # 1. 长度惩罚
-                    rewards[response_idx] += 0.5 if 20 <= len(response.strip()) <= 800 else -0.5
+                    rewards[response_idx] += 0.1 if 20 <= len(response.strip()) <= 800 else -0.5
 
-                    # 2. final_answer 格式奖励
+                    # 2. final_answer 格式奖励 (增加渐进式引导)
                     if 'final_answer' in response:
                         thinking_content, answer_content = response.split('final_answer', 1)
+                        # 完整格式奖励
                         rewards[response_idx] += 1.0 if 20 <= len(thinking_content.strip()) <= 300 else -0.5
                         rewards[response_idx] += 0.25 if response.count('final_answer') == 1 else -0.25
                         answer = answer_content.strip()
                         rewards[response_idx] -= rep_penalty(answer)
+                    else:
+                        # 【新增引导逻辑】：打破全是 0.5 分的死锁
+                        # 检查模型是否输出了部分潜在的相关词汇（根据你的实际任务调整这些词）
+                        if any(kw in response for kw in ['<|im_end|>', 'answer:', '答案', '结论', '最终结果']):
+                            rewards[response_idx] += 0.2  # 明显的正奖励
+                        else:
+                            rewards[response_idx] -= 0.5  # 重罚无格式输出
 
                     # 3. Reward Model 奖励
                     if self.reward_model is not None:
