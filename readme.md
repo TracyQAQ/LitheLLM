@@ -101,6 +101,7 @@ torchrun --nproc_per_node=8 train_full_sft.py \
 
 GRPO 脚本 (`train_grpo.py`) 负责在给定的 prompt 下生成多条候选回答，并通过奖励函数计算优势（Advantage），更新策略模型。
 
+使用torch作为推理引擎，启动训练命令如下。
 ```bash
 torchrun --nproc_per_node=8 train_grpo.py \
     --model_name_or_path /path/to/model \
@@ -120,7 +121,6 @@ torchrun --nproc_per_node=8 train_grpo.py \
     --log_interval 10 \
     --save_interval 100 \
     --thinking_ratio 0.0 \
-    --from_weight full_sft \
     --rollout_engine torch \
     --use_fsdp 1 \
     --fsdp_sharding_strategy full \
@@ -129,6 +129,47 @@ torchrun --nproc_per_node=8 train_grpo.py \
     --system_prompt_file /path/to/prompt_file \
     --reward_func_type DefaultReward \
     --ppo_epochs 3
+```
+
+若使用sglang作为推理引擎，用以下命令启动sglang服务器。
+```bash
+python -m sglang.launch_server \
+    --model-path path/to/rollout/model \
+    --port 8996 \
+    --host 0.0.0.0
+```
+启动训练命令如下。
+```bash
+torchrun --nproc_per_node=8 train_grpo.py \
+    --model_name_or_path /path/to/model \
+    --from_weight full_sft \
+    --from_resume 1 \
+    --data_path ../dataset/rlaif.jsonl \
+    --save_dir ../out \
+    --save_weight grpo \
+    --epochs 3 \
+    --batch_size 1 \
+    --learning_rate 5e-7 \
+    --max_seq_len 2048 \
+    --max_gen_len 1024 \
+    --num_generations 8 \
+    --use_reward_model 0 \
+    --thinking_ratio 0.0 \
+    --log_interval 10 \
+    --save_interval 100 \
+    --thinking_ratio 0.0 \
+    --rollout_engine sglang \
+    --sglang_base_url http://127.0.0.1:8996 \
+    --sglang_model_path path/to/rollout/model \
+    --sglang_shared_path path/to/sglang_ckpt_grpo \
+    --use_fsdp 1 \
+    --fsdp_sharding_strategy full \
+    --fsdp_cpu_offload \
+    --fsdp_backward_prefetch backward_post \
+    --system_prompt_file /path/to/prompt_file \
+    --reward_func_type DefaultReward \
+    --ppo_epochs 3
+
 ```
 
 ## 🧩 自定义奖励函数 (Rewards)
