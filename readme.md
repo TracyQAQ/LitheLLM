@@ -61,8 +61,8 @@ torchrun --nproc_per_node=8 train_pretrain.py \
     --accumulation_steps 5 \
     --max_seq_len 2048 \
     --dtype bfloat16 \
-    --log_interval 5 \
-    --save_interval 10 \
+    --log_interval 10 \
+    --save_interval 100 \
     --use_fsdp 1 \
     --fsdp_sharding_strategy full \
     --fsdp_cpu_offload \
@@ -88,7 +88,7 @@ torchrun --nproc_per_node=8 train_full_sft.py \
     --accumulation_steps 5 \
     --max_seq_len 2048 \
     --dtype bfloat16 \
-    --log_interval 5 \
+    --log_interval 10 \
     --save_interval 100 \
     --use_fsdp 1 \
     --fsdp_sharding_strategy full \
@@ -109,17 +109,16 @@ torchrun --nproc_per_node=8 train_grpo.py \
     --data_path ../dataset/rlaif.jsonl \
     --save_dir ../out \
     --save_weight grpo \
-    --epochs 3 \
+    --epochs 5 \
     --batch_size 1 \
     --learning_rate 5e-7 \
-    --accumulation_steps 4 \
     --max_seq_len 2048 \
     --max_gen_len 1024 \
-    --num_generations 2 \
+    --num_generations 8 \
     --use_reward_model 0 \
     --thinking_ratio 0.0 \
-    --log_interval 2 \
-    --save_interval 120 \
+    --log_interval 10 \
+    --save_interval 100 \
     --thinking_ratio 0.0 \
     --from_weight full_sft \
     --rollout_engine torch \
@@ -148,6 +147,12 @@ class MathTaskReward(BaseRewardFunction):
 ## 💾 权重合并与导出
 
 框架在训练时保存的是 PyTorch 原生 `state_dict` 格式的 `.pth` 文件（在 `out/` 目录下）。训练完成后，可使用 `merge_weights.py` 脚本，将这些增量/全量更新的张量与 HuggingFace 官方格式的模型进行合并，以便用于部署。
+```bash
+python merge_weights.py \
+    --trained_weights_path ./out/xxx.pth \
+    --original_model_path /path/to/original_model \
+    --output_dir /path/to/output_model
+```
 
 ## 📋 数据集格式要求
 
@@ -158,7 +163,6 @@ class MathTaskReward(BaseRewardFunction):
 * **GRPO**: 与 SFT 格式类似，但模型只会将 `user` 的内容作为 prompt，并 `rollout` 生成 assistant 的回答用于 RL。
 
 ## 📜 License
-
 This project is licensed under the MIT License. 
 
 ## 🙏 Acknowledgements
