@@ -323,14 +323,20 @@ class SGLangRolloutEngine(RolloutEngine):
         is_fsdp = isinstance(model, FSDP)
         is_main = not dist.is_initialized() or dist.get_rank() == 0
 
+        # 屏障1：确保所有 rank 都完成了 backward，才开始保存
+        if dist.is_initialized():
+            dist.barrier()
+
         if is_fsdp:
             save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
             with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
                 state_dict = model.state_dict()
-            if is_main:
-                unwrapped = model.module
-                unwrapped.save_pretrained(abs_path, state_dict=state_dict, safe_serialization=False)
-                self.tokenizer.save_pretrained(abs_path)
+                if is_main:
+                    unwrapped = model.module
+                    unwrapped.save_pretrained(abs_path, state_dict=state_dict, safe_serialization=False)
+                    self.tokenizer.save_pretrained(abs_path)
+
+            # 屏障2：等 rank0 写完磁盘，其他 rank 才能继续
             if dist.is_initialized():
                 dist.barrier()
             del state_dict
@@ -348,8 +354,7 @@ class SGLangRolloutEngine(RolloutEngine):
             )
             if resp.status_code != 200:
                 print(f"[SGLANG WARNING] update_weights 失败: {resp.status_code}, {resp.text}")
-            return resp.status_code == 200
-        # 【核心修改】增加分布式屏障，确保所有进程在此同步，等待 SGLang 更新完成
+        # 屏障3：等 SGLang 权重更新完毕，所有 rank 才能进入下一轮 rollout
         if dist.is_initialized():
             dist.barrier()
         return True

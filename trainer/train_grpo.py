@@ -82,6 +82,10 @@ def grpo_train_epoch(epoch, loader, iters, args, model, optimizer, scaler, sched
             max_new_tokens=args.max_gen_len,
             temperature=0.8,
         )
+        # ================= 修复多卡 FSDP 死锁：rollout 后立即加 barrier =================
+        if dist.is_initialized():
+            dist.barrier()
+        # =====================================================================
         outputs = rollout_result.output_ids.clone()
         completion_ids = rollout_result.completion_ids.clone()
         completions = rollout_result.completions
