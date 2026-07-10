@@ -158,4 +158,7 @@ class MathTaskReward(BaseRewardFunction):
 
 ## 📜 License
 
-[MIT License](LICENSE)
+This project is licensed under the MIT License. 
+
+## 🙏 Acknowledgements
+LitheLLM is built on the shoulders of giants: HuggingFace transformers, PyTorch FSDP, and the incredible open-source LLM community.
