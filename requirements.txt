@@ -1,0 +1,8 @@
+torch
+torch-npu
+transformers
+datasets
+numpy
+requests
+wandb
+swanlab
