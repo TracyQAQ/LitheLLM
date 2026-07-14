@@ -227,8 +227,6 @@ if __name__ == "__main__":
     parser.add_argument('--from_resume', default=1, type=int, choices=[0, 1])
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="Qwen-GRPO")
-    parser.add_argument("--debug_mode", action="store_true")
-    parser.add_argument("--debug_interval", type=int, default=20)
     parser.add_argument("--thinking_ratio", type=float, default=0.9)
     parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"])
     parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8996")

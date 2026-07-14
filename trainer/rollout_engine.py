@@ -164,7 +164,7 @@ class TorchRolloutEngine(RolloutEngine):
 
             prompt_len = prompt_ids.size(1)
             completion_ids = output_ids[:, prompt_len:]
-            completions = self.tokenizer.batch_decode(completion_ids, skip_special_tokens=True)
+            completions = self.tokenizer.batch_decode(completion_ids, skip_special_tokens=False)
 
             full_attention_mask = _build_full_attention_mask(
                 attention_mask, completion_ids, num_generations, self.tokenizer.eos_token_id
