@@ -77,7 +77,8 @@ def merge_shards(
     # 3. 复制配置文件
     for extra in ["config.json", "preprocessor_config.json", "generation_config.json",
                   "vocab.json", "merges.txt", "tokenizer.json", "tokenizer_config.json",
-                  "chat_template.jinja", "model.safetensors.index.json"]:
+                  "chat_template.jinja", "model.safetensors.index.json",
+                  "configuration.json", "video_preprocessor_config.json"]:
         src = os.path.join(original_model_path, extra)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(output_dir, extra))
