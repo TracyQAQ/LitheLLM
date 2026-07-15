@@ -195,6 +195,17 @@ python merge_weights.py \
     --output_dir /path/to/output_model
 ```
 
+## 🤖 推理
+使用vllm部署后，通过以下代码启动服务端。
+```bash
+python gateway.py \
+  --host 0.0.0.0 \
+  --port 8081 \
+  --vllm-backend http://127.0.0.1:31039 \
+  --tokenizer-path /path/to/output_model \
+  --system-prompt-file /path/to/system_prompt.md
+```
+
 ## 📋 数据集格式要求
 
 内置 `lm_dataset.py` 解析器，数据集为以下格式的 `.jsonl` 文件：
