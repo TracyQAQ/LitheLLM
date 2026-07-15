@@ -28,6 +28,8 @@ LitheLLM/
 │   ├── train_grpo.py     # GRPO 强化学习启动脚本
 │   └── trainer_utils.py  # 训练工具类 (日志、LR 调度、环境初始化等)
 ├── merge_weights.py      # 将训练后的 pth 权重与官方权重合并的脚本
+├── infer/                # 推理
+│   └── gateway.py        # vllm服务端网关
 ├── README.md
 └── requirements.txt
 ```
