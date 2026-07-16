@@ -267,11 +267,24 @@ class RLAIFDataset(Dataset):
                 conversations.insert(0, {'role': 'system', 'content': self.system_prompt})
         else:
             conversations = pre_processing_chat(conversations)
+        # 2. 直接在当前方法内提取 tools (无需额外函数，逻辑自包含)
+        tools = None
+        for message in conversations:
+            if message.get("role") == "system" and message.get("tools"):
+                try:
+                    if isinstance(message["tools"], str):
+                        tools = json.loads(message["tools"])
+                    else:
+                        tools = message["tools"]
+                except Exception:
+                    pass  # 解析失败则忽略
+
         # ================================================
         use_thinking = random.random() < self.thinking_ratio
         return self.tokenizer.apply_chat_template(
             conversations[:-1],
             tokenize=False,
+            tools=tools,
             enable_thinking=use_thinking,
             add_generation_prompt=True,
         )
