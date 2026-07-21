@@ -110,7 +110,7 @@ torchrun --nproc_per_node=8 train_full_sft.py \
 
 ### 3. GRPO 强化学习对齐
 
-`train_grpo.py` 实现 GRPO 训练逻辑：针对输入 Prompt 采样生成多条候选回答，调用奖励函数得到各样本奖励，计算优势值（Advantage），依据优势梯度更新策略网络。
+`train_grpo.py` 实现 GRPO 训练逻辑：针对输入 Prompt 采样生成多条候选回答，调用奖励函数得到各样本奖励，计算优势值（Advantage），依据优势梯度更新策略网络。若需使用奖励模型，可设置参数--use_reward_model为1，并为--reward_model_path设置路径。
 
 使用torch作为推理引擎，启动训练命令如下。
 ```bash

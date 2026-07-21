@@ -43,18 +43,6 @@ def get_lr(current_step, total_steps, lr, warmup_steps=0):
     return lr * (0.1 + 0.45 * (1 + math.cos(math.pi * progress)))
 
 
-
-# def get_decoder_layer_class(model):
-#     """自动检测模型的 DecoderLayer 类。"""
-#     if hasattr(model, 'model') and hasattr(model.model, 'layers') and len(model.model.layers) > 0:
-#         return type(model.model.layers[0])
-#     for name, module in model.named_modules():
-#         class_name = type(module).__name__
-#         if 'DecoderLayer' in class_name or 'Block' in class_name:
-#             return type(module)
-#     raise ValueError("无法自动检测 DecoderLayer 类。请手动传入 decoder_layer_cls 参数。")
-
-
 def get_model_block_classes(model):
     """
     自动检测模型的 DecoderLayer 类和 MoE Block 类。

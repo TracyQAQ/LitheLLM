@@ -6,3 +6,5 @@ numpy
 requests
 wandb
 swanlab
+vllm
+sglang

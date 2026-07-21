@@ -38,7 +38,6 @@ from trainer.trainer_utils import (
     init_model,
     LMForRewardModel,
     get_model_block_classes,
-    # get_decoder_layer_class,
 )
 from trainer.rollout_engine import create_rollout_engine, compute_per_token_logps, _clear_model_cache
 import warnings
