@@ -1,4 +1,4 @@
-torch
+torch==2.9.1
 torch-npu
 transformers
 datasets
@@ -7,4 +7,4 @@ requests
 wandb
 swanlab
 vllm
-sglang
+sglang==0.5.10.post1

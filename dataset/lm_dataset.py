@@ -232,7 +232,6 @@ class SFTDataset(Dataset):
                 prompt = self.create_chat_prompt(conversations)
                 prompt = post_processing_chat(prompt)
                 input_ids = self.tokenizer(prompt, truncation=True, max_length=self.max_length).input_ids
-                # input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
                 labels = self.generate_labels(input_ids)
                 return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
             except Exception:
@@ -277,7 +276,7 @@ class RLAIFDataset(Dataset):
                     else:
                         tools = message["tools"]
                 except Exception:
-                    pass  # 解析失败则忽略
+                    pass
 
         # ================================================
         use_thinking = random.random() < self.thinking_ratio
@@ -293,35 +292,6 @@ class RLAIFDataset(Dataset):
         sample = self.samples[index]
         prompt = self.create_chat_prompt(sample['conversations'])
         return {'prompt': prompt, 'answer': ""}
-
-
-class AgentRLDataset(Dataset):
-    def __init__(self, jsonl_path, tokenizer, max_length=1024):
-        super().__init__()
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.samples = []
-        with open(jsonl_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                self.samples.append(json.loads(line.strip()))
-
-    def __len__(self):
-        return len(self.samples)
-
-    def parse_conversations(self, conversations):
-        messages = []
-        tools = None
-        for message in conversations:
-            message = dict(message)
-            if message.get("role") == "system" and message.get("tools"):
-                tools = json.loads(message["tools"]) if isinstance(message["tools"], str) else message["tools"]
-            messages.append(message)
-        return messages[:-1], tools
-
-    def __getitem__(self, index):
-        sample = self.samples[index]
-        messages, tools = self.parse_conversations(sample['conversations'])
-        return {'messages': messages, 'tools': tools, 'gt': sample['gt']}
 
 
 if __name__ == "__main__":
