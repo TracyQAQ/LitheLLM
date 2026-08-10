@@ -315,7 +315,7 @@ if __name__ == "__main__":
             if args.from_weight and os.path.exists(args.from_weight):
                 weight_path = args.from_weight
                 if is_main_process():
-                    Logger(f"警告: 未找到 GRPO 权重 {resume_weight_path}，将使用 --from_weight 指定的 {weight_path}")
+                    Logger(f"警告: 未找到 Pretrain 权重 {resume_weight_path}，将使用 --from_weight 指定的 {weight_path}")
             else:
                 if is_main_process():
                     Logger("警告: 未找到任何可加载的权重，将使用原始预训练模型")
