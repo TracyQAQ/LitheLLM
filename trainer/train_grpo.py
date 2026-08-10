@@ -282,7 +282,7 @@ if __name__ == "__main__":
 
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         wandb.init(project=args.wandb_project, name=f"GRPO-BS{args.batch_size}-LR{args.learning_rate}", id=wandb_id,
-                   resume='must' if wandb_id else None)
+                   resume='allow' if wandb_id else None)
 
     # ========== 5. 模型 ==========
     model_device = args.device if not use_fsdp else "cpu"

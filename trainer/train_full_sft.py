@@ -231,7 +231,7 @@ def train_epoch(epoch, loader, iters, args, model, optimizer, scaler, autocast_c
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Qwen3.5 Full SFT with FSDP (CUDA/NPU)")
+    parser = argparse.ArgumentParser(description="Qwen Full SFT with FSDP (CUDA/NPU)")
     parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
     parser.add_argument('--save_weight', default='full_sft', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
@@ -309,7 +309,7 @@ if __name__ == "__main__":
         except ImportError:
             import wandb
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
+        resume = 'allow' if wandb_id else None
         wandb_run_name = f"Qwen-Full-SFT-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
 

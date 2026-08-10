@@ -220,7 +220,7 @@ def train_epoch(epoch, loader, iters, args, model, optimizer, scaler, autocast_c
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="General Pretraining for Qwen/Qwen3.5-like models with FSDP/DDP")
+    parser = argparse.ArgumentParser(description="Qwen Pretrain with FSDP")
     parser.add_argument("--model_name_or_path", type=str, required=True, help="预训练模型路径或名称")
     parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
     parser.add_argument('--save_weight', default='pretrain', type=str, help="保存权重的前缀名")
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     parser.add_argument('--from_weight', default=None, type=str, help="基于哪个权重训练，为None则从头开始")
     parser.add_argument('--from_resume', default=1, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="Pretrain-Qwen", help="wandb项目名")
+    parser.add_argument("--wandb_project", type=str, default="Qwen-Pretrain", help="wandb项目名")
     parser.add_argument("--use_flash_attn", action="store_true", help="是否启用Flash Attention 2")
     parser.add_argument("--use_fsdp", default=1, type=int, choices=[0, 1], help="是否使用FSDP（1=是，0=否，DDP）")
     parser.add_argument("--fsdp_sharding_strategy", type=str, default="full",
@@ -296,7 +296,7 @@ if __name__ == "__main__":
         except ImportError:
             import wandb
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
+        resume = 'allow' if wandb_id else None
         wandb_run_name = f"Pretrain-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
 
