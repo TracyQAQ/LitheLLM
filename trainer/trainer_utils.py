@@ -159,23 +159,51 @@ def lm_checkpoint(action='load', optimizer=None, epoch=0, global_step=0, wandb=N
         Logger(f"成功保存训练状态至 {ckp_path}")
 
     elif action == 'load':
+        # # ================= 加载模式 =================
+        # if not os.path.exists(ckp_path):
+        #     Logger(f"断点文件 {ckp_path} 不存在，无法恢复训练状态。", level="warn")
+        #     return None
+        #
+        # ckp_data = torch.load(ckp_path, map_location='cpu', weights_only=False)
+        #
+        # # 兼容旧版本：如果没有 global_step，尝试从 step 转换
+        # if 'global_step' not in ckp_data and 'step' in ckp_data:
+        #     saved_ws = ckp_data.get('world_size', 1)
+        #     current_ws = dist.get_world_size() if dist.is_initialized() else 1
+        #     old_micro_step = ckp_data['step']
+        #     scaled_micro_step = old_micro_step * saved_ws // current_ws
+        #     ckp_data['global_step'] = scaled_micro_step
+        #     Logger(
+        #         f'兼容旧版 Checkpoint: GPU数量变化({saved_ws}→{current_ws})，global_step 推算为 {ckp_data["global_step"]}')
+
         # ================= 加载模式 =================
         if not os.path.exists(ckp_path):
             Logger(f"断点文件 {ckp_path} 不存在，无法恢复训练状态。", level="warn")
             return None
-
         ckp_data = torch.load(ckp_path, map_location='cpu', weights_only=False)
 
-        # 兼容旧版本：如果没有 global_step，尝试从 step 转换
-        if 'global_step' not in ckp_data and 'step' in ckp_data:
-            saved_ws = ckp_data.get('world_size', 1)
-            current_ws = dist.get_world_size() if dist.is_initialized() else 1
-            old_micro_step = ckp_data['step']
-            scaled_micro_step = old_micro_step * saved_ws // current_ws
-            ckp_data['global_step'] = scaled_micro_step
-            Logger(
-                f'兼容旧版 Checkpoint: GPU数量变化({saved_ws}→{current_ws})，global_step 推算为 {ckp_data["global_step"]}')
+        # === 新增/修改部分：统一的步数换算逻辑 ===
+        # 获取保存的步数（兼容新旧版本）
+        saved_global_step = ckp_data.get('global_step', ckp_data.get('step', 0))
 
+        # 异构环境自适应逻辑
+        saved_ws = ckp_data.get('world_size', 1)
+        current_ws = dist.get_world_size() if dist.is_initialized() else 1
+
+        # 如果卡数变化，进行换算
+        if saved_ws != current_ws:
+            # 这里的逻辑：总样本数守恒 -> step * world_size = constant
+            # 新 step = 旧 step * 旧 ws / 新 ws
+            adjusted_global_step = int(saved_global_step * saved_ws / current_ws)
+            Logger(
+                f"[异构恢复] GPU数量变化({saved_ws} -> {current_ws})，步数换算: {saved_global_step} -> {adjusted_global_step}")
+            ckp_data['global_step'] = adjusted_global_step  # 覆盖为正确的步数
+        else:
+            ckp_data['global_step'] = saved_global_step
+
+        # 兼容旧版本标记清理（可选）
+        if 'step' in ckp_data:
+            del ckp_data['step']
         return ckp_data
     else:
         raise ValueError(f"lm_checkpoint 不支持的 action: {action}，必须是 'save' 或 'load'")
