@@ -219,13 +219,18 @@ def train_epoch(epoch, loader, iters, args, model, optimizer, scaler, autocast_c
             eta_min = (remaining_steps / steps_per_sec) / 60 if steps_per_sec > 0 else 0
 
             current_loss = running_loss / log_micro_steps if log_micro_steps > 0 else 0.0
+            current_acc = running_acc / log_micro_steps if log_micro_steps > 0 else 0.0
             Logger(
                 f'Epoch:[{epoch + 1}/{args.epochs}] Step:[{local_step}/{steps_per_epoch}] (Flushing completed), '
-                f'loss: {current_loss:.4f}, lr: {optimizer.param_groups[-1]["lr"]:.8f}, eta: {eta_min:.1f}min'
+                f'loss: {current_loss:.4f}, acc: {current_acc:.4f}, lr: {optimizer.param_groups[-1]["lr"]:.8f}, eta: {eta_min:.1f}min'
             )
             if wandb and log_micro_steps > 0:
                 avg_loss = running_loss / log_micro_steps
-                wandb.log({"train/loss": avg_loss, "train/global_step": global_step}, step=global_step)
+                wandb.log({
+                    "train/loss": avg_loss,
+                    "train/accuracy": current_acc,
+                    "train/global_step": global_step
+                }, step=global_step)
 
     return global_step
 
