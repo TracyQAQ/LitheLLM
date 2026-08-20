@@ -9,6 +9,7 @@ import math
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
 
@@ -277,34 +278,173 @@ class SkipBatchSampler(Sampler):
 
 
 class LMForRewardModel:
-    """Reward 模型封装，支持批量推理。"""
+    """Reward 模型封装，支持 InternLM2 RM 和 Skywork-Reward 等通用 RM。"""
 
     def __init__(self, model_path, device="cuda", dtype=torch.float16):
-        from transformers import AutoConfig
+        from transformers import AutoConfig, AutoModel, AutoTokenizer
         from transformers.cache_utils import DynamicCache
+
+        # ---------- DynamicCache 兼容补丁 ----------
         if not hasattr(DynamicCache, 'from_legacy_cache'):
             @classmethod
-            def _from_legacy_cache(cls, past_key_values): return cls()
-
+            def _from_legacy_cache(cls, past_key_values):
+                return cls()
             DynamicCache.from_legacy_cache = _from_legacy_cache
-        if not hasattr(DynamicCache, 'to_legacy_cache'):
-            def _to_legacy_cache(self): return ()
 
+        if not hasattr(DynamicCache, 'to_legacy_cache'):
+            def _to_legacy_cache(self):
+                return ()
             DynamicCache.to_legacy_cache = _to_legacy_cache
+        # -------------------------------------------
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+
         if hasattr(config, 'rope_scaling') and config.rope_scaling is not None:
             if 'rope_type' in config.rope_scaling:
                 rope_type = config.rope_scaling['rope_type']
-                if rope_type == 'default': rope_type = 'linear'
+                if rope_type == 'default':
+                    rope_type = 'linear'
                 config.rope_scaling['type'] = rope_type
             if 'factor' not in config.rope_scaling:
                 config.rope_scaling['factor'] = 1.0
+
         config.use_cache = False
         self.model = AutoModel.from_pretrained(model_path, config=config, dtype=dtype, trust_remote_code=True)
         self.model = self.model.to(device).eval()
         self.device = device
+
+        # ============================================================
+        # 关键修复 1：处理 tok_embeddings 越界（InternLM2 RM 需要）
+        # ============================================================
+        self._fix_embedding_size()
+
+        # ============================================================
+        # 关键修复 2：手动加载被丢弃的 score 打分头（Skywork-Reward 需要）
+        # ============================================================
+        self.score_head = self._load_score_head(model_path, dtype, device)
+
+        if self.score_head is not None:
+            Logger(f"[RM] 成功加载 score 打分头: {self.score_head.weight.shape}")
+
+    def _fix_embedding_size(self):
+        """如果 tokenizer 词表 > embedding 行数，手动扩展 tok_embeddings"""
+        tokenizer_vocab_size = len(self.tokenizer)
+
+        # 自动探测 embedding 层
+        emb_layer = None
+        emb_attr_name = None
+        for attr in ['model.tok_embeddings', 'model.embed_tokens', 'embed_tokens', 'tok_embeddings']:
+            obj = self.model
+            try:
+                for part in attr.split('.'):
+                    obj = getattr(obj, part)
+                if hasattr(obj, 'weight') and len(obj.weight.shape) == 2:
+                    emb_layer = obj
+                    emb_attr_name = attr
+                    break
+            except AttributeError:
+                continue
+
+        if emb_layer is None:
+            for name, module in self.model.named_modules():
+                if isinstance(module, nn.Embedding) and module.weight.shape[0] > 1000:
+                    emb_layer = module
+                    emb_attr_name = name
+                    break
+
+        if emb_layer is None:
+            return
+
+        old_vocab = emb_layer.weight.shape[0]
+        if tokenizer_vocab_size > old_vocab:
+            new_emb = nn.Embedding(
+                tokenizer_vocab_size, emb_layer.weight.shape[1],
+                padding_idx=emb_layer.padding_idx
+            ).to(self.model.device)
+            with torch.no_grad():
+                new_emb.weight[:old_vocab].copy_(emb_layer.weight.data)
+                mean_vec = emb_layer.weight.data.mean(dim=0, keepdim=True)
+                new_emb.weight[old_vocab:].copy_(
+                    mean_vec.expand(tokenizer_vocab_size - old_vocab, -1)
+                )
+            new_emb.weight.requires_grad = emb_layer.weight.requires_grad
+
+            # 写回模型
+            parent = self.model
+            parts = emb_attr_name.split('.')
+            for part in parts[:-1]:
+                parent = getattr(parent, part)
+            setattr(parent, parts[-1], new_emb)
+
+            self.model.config.vocab_size = tokenizer_vocab_size
+            Logger(f"[RM Fix] tok_embeddings 扩展: {old_vocab} -> {tokenizer_vocab_size}")
+
+    def _load_score_head(self, model_path, dtype, device):
+        """
+        手动从 checkpoint 中加载 score 打分头。
+        AutoModel 加载 Qwen3Model 时会丢弃 score.weight (UNEXPECTED)，
+        需要手动读取并创建对应的 Linear 层。
+        """
+        import os
+
+        # 1. 找到 checkpoint 文件（支持单文件和分片）
+        files_to_check = []
+        for fname in ['model.safetensors', 'pytorch_model.bin']:
+            fpath = os.path.join(model_path, fname)
+            if os.path.exists(fpath):
+                files_to_check.append(fpath)
+                break
+
+        if not files_to_check:
+            # 分片文件
+            for fname in sorted(os.listdir(model_path)):
+                if fname.startswith('model-') and (fname.endswith('.safetensors') or fname.endswith('.bin')):
+                    files_to_check.append(os.path.join(model_path, fname))
+
+        if not files_to_check:
+            Logger(f"[RM] 未找到 checkpoint 文件，跳过 score head 加载")
+            return None
+
+        # 2. 遍历所有文件查找 score 权重
+        score_weight = None
+        score_bias = None
+
+        for fpath in files_to_check:
+            try:
+                if fpath.endswith('.safetensors'):
+                    from safetensors.torch import load_file
+                    sd = load_file(fpath)
+                else:
+                    sd = torch.load(fpath, map_location='cpu', weights_only=False)
+
+                for key, val in sd.items():
+                    if key.endswith('score.weight') or key == 'score.weight':
+                        score_weight = val
+                    elif key.endswith('score.bias') or key == 'score.bias':
+                        score_bias = val
+                    elif key.endswith('reward_head.weight') or key == 'reward_head.weight':
+                        score_weight = val
+                    elif key.endswith('reward_head.bias') or key == 'reward_head.bias':
+                        score_bias = val
+            except:
+                continue
+
+        if score_weight is None:
+            Logger(f"[RM] checkpoint 中未找到 score 权重，可能模型自带 get_score 方法")
+            return None
+
+        # 3. 创建 Linear 层
+        hidden_size = score_weight.shape[1]
+        num_labels = score_weight.shape[0]
+
+        score_layer = nn.Linear(hidden_size, num_labels, bias=(score_bias is not None))
+        score_layer.weight.data = score_weight.to(dtype)
+        if score_bias is not None:
+            score_layer.bias.data = score_bias.to(dtype)
+        score_layer = score_layer.to(device)
+
+        return score_layer
 
     @torch.no_grad()
     def get_score(self, messages, response):
@@ -315,8 +455,57 @@ class LMForRewardModel:
             {"role": "user", "content": message_context},
             {"role": "assistant", "content": response},
         ]
-        score = self.model.get_score(self.tokenizer, eval_messages)
-        return max(min(score, 3.0), -3.0)
+
+        # ---------- 方式 1：模型自带 get_score (InternLM2 RM) ----------
+        if hasattr(self.model, 'get_score') and callable(getattr(self.model, 'get_score')):
+            try:
+                score = self.model.get_score(self.tokenizer, eval_messages)
+                if isinstance(score, torch.Tensor):
+                    score = score.detach().cpu().float().item()
+                return max(min(score, 3.0), -3.0)
+            except Exception as e:
+                Logger(f"[WARN] model.get_score failed: {e}", level="warn")
+                # 降级到方式 2
+                pass
+
+        # ---------- 方式 2：手动前向 + score head (Skywork-Reward 等) ----------
+        try:
+            text = self.tokenizer.apply_chat_template(
+                eval_messages, tokenize=False, add_generation_prompt=False
+            )
+            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=2048)
+            input_ids = inputs["input_ids"].to(self.device)
+            attention_mask = inputs["attention_mask"].to(self.device)
+
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+
+            # 获取最后一个非 padding token 的 hidden state
+            if hasattr(outputs, 'last_hidden_state'):
+                last_hidden = outputs.last_hidden_state
+            elif hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+                last_hidden = outputs.hidden_states[-1]
+            else:
+                raise ValueError("模型输出没有 last_hidden_state 或 hidden_states")
+
+            last_idx = attention_mask.sum(dim=1) - 1
+            last_token_hidden = last_hidden[torch.arange(last_hidden.size(0)), last_idx]
+
+            # 用 score head 打分
+            if self.score_head is not None:
+                score = self.score_head(last_token_hidden)
+                score = score.squeeze(-1).float().item()
+            elif hasattr(self.model, 'v_head'):
+                score = self.model.v_head(last_token_hidden).squeeze(-1).float().item()
+            elif hasattr(self.model, 'score'):
+                score = self.model.score(last_token_hidden).squeeze(-1).float().item()
+            else:
+                raise ValueError("没有可用的 score head")
+
+            return max(min(score, 3.0), -3.0)
+
+        except Exception as e:
+            Logger(f"[WARN] get_score forward failed: {e}", level="warn")
+            return 0.0
 
     @torch.no_grad()
     def batch_get_scores(self, messages_list, responses):
