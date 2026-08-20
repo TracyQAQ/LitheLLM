@@ -144,6 +144,7 @@ torchrun --nproc_per_node=8 train_grpo.py \
 
 若使用sglang作为推理引擎，用以下命令启动sglang服务器。
 ```bash
+CUDA_VISIBLE_DEVICES=0 \
 python -m sglang.launch_server \
     --model-path path/to/rollout/model \
     --port 8996 \
@@ -151,7 +152,8 @@ python -m sglang.launch_server \
 ```
 启动训练命令如下。
 ```bash
-torchrun --nproc_per_node=8 train_grpo.py \
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 \
+torchrun --nproc_per_node=7 train_grpo.py \
     --model_name_or_path /path/to/model \
     --from_weight full_sft \
     --from_resume 1 \
